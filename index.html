@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32 电机控制</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #f0f4f8;
+        }
+
+        .container {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .connection-panel {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 25px;
+        }
+
+        button {
+            padding: 12px 24px;
+            margin: 5px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .connect-btn {
+            background: #3498db;
+            color: white;
+        }
+
+        .connect-btn:hover {
+            background: #2980b9;
+        }
+
+        .disconnect-btn {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .disconnect-btn:hover {
+            background: #c0392b;
+        }
+
+        .control-btn {
+            background: #2ecc71;
+            color: white;
+            width: 120px;
+            margin: 8px;
+        }
+
+        .control-btn:hover {
+            background: #27ae60;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .connected {
+            background: #2ecc71;
+        }
+
+        .disconnected {
+            background: #e74c3c;
+        }
+
+        .speed-control {
+            margin: 20px 0;
+            text-align: center;
+        }
+
+        #speed {
+            padding: 8px;
+            width: 80px;
+            margin: 0 10px;
+            border: 2px solid #3498db;
+            border-radius: 4px;
+        }
+
+        .status-box {
+            background: #ecf0f1;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>ESP32 智能小车控制</h1>
+        
+        <div class="connection-panel">
+            <button id="connectBtn" class="connect-btn">连接设备</button>
+            <button id="disconnectBtn" class="disconnect-btn">断开连接</button>
+            <p>连接状态: 
+                <span class="status-indicator disconnected"></span>
+                <span id="connectionStatus">未连接</span>
+            </p>
+        </div>
+
+        <div class="control-panel">
+            <div style="text-align: center;">
+                <button class="control-btn" id="forwardBtn">前进 (W)</button>
+            </div>
+            <div style="display: flex; justify-content: center;">
+                <button class="control-btn" id="leftBtn">左转 (A)</button>
+                <button class="control-btn" id="stopBtn">停止 (T)</button>
+                <button class="control-btn" id="rightBtn">右转 (D)</button>
+            </div>
+            <div style="text-align: center;">
+                <button class="control-btn" id="backwardBtn">后退 (S)</button>
+            </div>
+        </div>
+
+        <div class="speed-control">
+            <label>速度设置:</label>
+            <input type="number" id="speed" min="0" max="1000" value="300">
+            <button class="control-btn" id="setSpeedBtn">设置速度</button>
+        </div>
+
+        <div class="status-box">
+            <h3>设备状态</h3>
+            <p>当前速度: <span id="currentSpeed">--</span></p>
+            <p>最后操作: <span id="lastCommand">--</span></p>
+            <p>更新时间: <span id="updateTime">--</span></p>
+        </div>
+    </div>
+
+    <script>
+        // BLE 配置参数
+        const SERVICE_UUID = 'dcfc67b6-11cf-4ba0-a133-92d7278b0c4b';
+        const RX_CHARACTERISTIC_UUID = '8a97fb7e-2650-4495-926c-884a5edcfd79';
+        const TX_CHARACTERISTIC_UUID = '79af6141-1abb-4897-a3bf-7d0da4620385';
+
+        let bleDevice;
+        let rxCharacteristic;
+        let txCharacteristic;
+
+        // DOM 元素
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const statusIndicator = document.querySelector('.status-indicator');
+        const connectionStatus = document.getElementById('connectionStatus');
+
+        // 连接设备
+        async function connectToDevice() {
+            try {
+                bleDevice = await navigator.bluetooth.requestDevice({
+                    filters: [{ name: 'LEO_BLE' }],
+                    optionalServices: [SERVICE_UUID]
+                });
+
+                const server = await bleDevice.gatt.connect();
+                const service = await server.getPrimaryService(SERVICE_UUID);
+                
+                rxCharacteristic = await service.getCharacteristic(RX_CHARACTERISTIC_UUID);
+                txCharacteristic = await service.getCharacteristic(TX_CHARACTERISTIC_UUID);
+
+                // 启用状态通知
+                await txCharacteristic.startNotifications();
+                txCharacteristic.addEventListener('characteristicvaluechanged', handleStatusUpdate);
+
+                updateConnectionState(true);
+                console.log('BLE 连接成功');
+            } catch (error) {
+                console.error('连接失败:', error);
+                alert(`连接失败: ${error.message}`);
+            }
+        }
+
+        // 处理状态更新
+        function handleStatusUpdate(event) {
+            const decoder = new TextDecoder();
+            const [state, speed, lastCmd, timestamp] = decoder.decode(event.target.value).split(',');
+            
+            document.getElementById('currentSpeed').textContent = speed;
+            document.getElementById('lastCommand').textContent = lastCmd;
+            document.getElementById('updateTime').textContent = formatTime(timestamp);
+        }
+
+        // 发送控制命令
+        async function sendControlCommand(cmd) {
+            if (!rxCharacteristic) {
+                alert('请先连接设备');
+                return;
+            }
+
+            const encoder = new TextEncoder();
+            await rxCharacteristic.writeValue(encoder.encode(cmd));
+            console.log(`命令发送成功: ${cmd}`);
+        }
+
+        // 设置速度
+        async function setCarSpeed() {
+            const speed = document.getElementById('speed').value;
+            await sendControlCommand(`s${speed}`);
+        }
+
+        // 格式化时间显示
+        function formatTime(timestamp) {
+            const date = new Date(Number(timestamp));
+            return date.toLocaleString('zh-CN');
+        }
+
+        // 更新连接状态
+        function updateConnectionState(connected) {
+            if (connected) {
+                statusIndicator.classList.replace('disconnected', 'connected');
+                connectionStatus.textContent = '已连接';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+            } else {
+                statusIndicator.classList.replace('connected', 'disconnected');
+                connectionStatus.textContent = '未连接';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+            }
+        }
+
+        // 事件监听
+        connectBtn.addEventListener('click', connectToDevice);
+        disconnectBtn.addEventListener('click', () => {
+            if (bleDevice?.gatt?.connected) {
+                bleDevice.gatt.disconnect();
+                updateConnectionState(false);
+            }
+        });
+
+        document.getElementById('forwardBtn').addEventListener('click', () => sendControlCommand('w'));
+        document.getElementById('backwardBtn').addEventListener('click', () => sendControlCommand('s'));
+        document.getElementById('leftBtn').addEventListener('click', () => sendControlCommand('a'));
+        document.getElementById('rightBtn').addEventListener('click', () => sendControlCommand('d'));
+        document.getElementById('stopBtn').addEventListener('click', () => sendControlCommand('t'));
+        document.getElementById('setSpeedBtn').addEventListener('click', setCarSpeed);
+    </script>
+</body>
+</html>
