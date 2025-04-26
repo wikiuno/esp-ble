@@ -169,7 +169,7 @@
         async function connectToDevice() {
             try {
                 bleDevice = await navigator.bluetooth.requestDevice({
-                    filters: [{ name: 'ESP_BLE' }],
+                    filters: [{ name: 'ESP32' }],
                     optionalServices: [SERVICE_UUID]
                 });
 
